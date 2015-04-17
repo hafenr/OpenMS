@@ -200,6 +200,11 @@ namespace OpenMS
     return StringUtils::has(*this, byte);
   }
 
+  bool String::isDouble() const
+  {
+    return StringUtils::isDouble(*this);
+  }
+
   String String::prefix(SizeType length) const
   {
     return StringUtils::prefix(*this, length);

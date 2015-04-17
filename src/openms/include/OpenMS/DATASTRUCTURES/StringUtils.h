@@ -45,6 +45,7 @@
 
 #include <string>
 #include <vector>
+#include <stdlib.h>
 
 class String;
 
@@ -255,6 +256,17 @@ public:
     static bool has(const String & this_s, Byte byte)
     {
       return this_s.find(char(byte)) != std::string::npos;
+    }
+
+    static bool isDouble(const String & this_s)
+    {
+      const char* str = this_s.c_str();
+      char* endptr = 0;
+      strtod(str, &endptr);
+
+      if(*endptr != '\0' || endptr == str)
+          return false;
+      return true;
     }
 
     static String prefix(const String & this_s, size_t length)

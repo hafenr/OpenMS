@@ -815,103 +815,133 @@ namespace OpenMS
       throw Exception::ParseError(__FILE__, __LINE__, __PRETTY_FUNCTION__, str, "Cannot convert string to peptide modification: missing ']'");
     }
 
-    double mass = String(mod).toDouble();
-    size_t decimal_pos = mod.find('.');
-    bool integer_mass = decimal_pos == string::npos;
-    double tolerance = 0.5; // for integer mass values
-    if (!integer_mass) // float mass values -> adapt tol. to decimal precision
+    if (String(mod).isDouble())
     {
-      size_t n_decimals = mod.size() - decimal_pos - 2;
-      tolerance = pow(10.0, -int(n_decimals));
-    }
-    bool delta_mass = (mod[0] == '+') || (mod[0] == '-');
-    ModificationsDB* mod_db = ModificationsDB::getInstance();
+      double mass = String(mod).toDouble();
+      size_t decimal_pos = mod.find('.');
+      bool integer_mass = decimal_pos == string::npos;
+      double tolerance = 0.5; // for integer mass values
+      if (!integer_mass) // float mass values -> adapt tol. to decimal precision
+      {
+        size_t n_decimals = mod.size() - decimal_pos - 2;
+        tolerance = pow(10.0, -int(n_decimals));
+      }
+      bool delta_mass = (mod[0] == '+') || (mod[0] == '-');
+      ModificationsDB* mod_db = ModificationsDB::getInstance();
 
-    const Residue* residue = 0;
-    if (!aas.peptide_.empty())
-    {
-      // internal modification (why not potentially C-terminal?):
-      residue = aas.peptide_.back();
-      if (delta_mass && (residue->getMonoWeight() <= 0.0)) // not allowed
+      const Residue* residue = 0;
+      if (!aas.peptide_.empty())
       {
-        throw Exception::ParseError(__FILE__, __LINE__, __PRETTY_FUNCTION__, str, "Using a mass difference to specify a modification on a residue of unknown mass is not supported in '" + residue->getOneLetterCode() + "[" + mod +  "]'");
-      }
-      if (integer_mass) // use first modification that matches approximately
-      {
-        vector<String> res_mods;
-        if (!delta_mass) // compute delta mass based on residue mass
+        // internal modification (why not potentially C-terminal?):
+        residue = aas.peptide_.back();
+        if (delta_mass && (residue->getMonoWeight() <= 0.0)) // not allowed
         {
-          // we expect that delta mass is relative to the full mass of the
-          // residue, not its "internal" mass in the peptide (loss of H2O)!
-          mass -= residue->getMonoWeight(Residue::Internal);
-          delta_mass = true; // in case we need to create a new residue below
+          throw Exception::ParseError(__FILE__, __LINE__, __PRETTY_FUNCTION__, str, "Using a mass difference to specify a modification on a residue of unknown mass is not supported in '" + residue->getOneLetterCode() + "[" + mod +  "]'");
         }
-        mod_db->getModificationsByDiffMonoMass(
-          res_mods, residue->getOneLetterCode(), mass, tolerance);
-        if (!res_mods.empty())
+        if (integer_mass) // use first modification that matches approximately
         {
-          const ResidueModification* res_mod = &(mod_db->
-                                                 getModification(res_mods[0]));
-          aas.peptide_.back() = ResidueDB::getInstance()->
-            getModifiedResidue(residue, res_mod->getId());
+          vector<String> res_mods;
+          if (!delta_mass) // compute delta mass based on residue mass
+          {
+            // we expect that delta mass is relative to the full mass of the
+            // residue, not its "internal" mass in the peptide (loss of H2O)!
+            mass -= residue->getMonoWeight(Residue::Internal);
+            delta_mass = true; // in case we need to create a new residue below
+          }
+          mod_db->getModificationsByDiffMonoMass(
+            res_mods, residue->getOneLetterCode(), mass, tolerance);
+          if (!res_mods.empty())
+          {
+            const ResidueModification* res_mod = &(mod_db->
+                                                   getModification(res_mods[0]));
+            aas.peptide_.back() = ResidueDB::getInstance()->
+              getModifiedResidue(residue, res_mod->getId());
+            return mod_end;
+          }
+        }
+        else // float mass -> use best-matching modification
+        {
+          const ResidueModification* res_mod;
+          if (delta_mass)
+          {
+            res_mod = mod_db->getBestModificationsByDiffMonoMass(
+              residue->getOneLetterCode(), mass, tolerance);
+          }
+          else // absolute mass
+          {
+            res_mod = mod_db->getBestModificationsByMonoMass(
+              residue->getOneLetterCode(), mass, tolerance);
+          }
+          if (res_mod)
+          {
+            aas.peptide_.back() = ResidueDB::getInstance()->
+              getModifiedResidue(residue, res_mod->getId());
+            return mod_end;
+          }
+        }
+        LOG_WARN << "Warning: unknown modification '" + mod + "' of residue '" +
+          residue->getOneLetterCode() + "' - adding it to the database" << endl;
+      }
+      // at beginning of peptide:
+      else if (delta_mass) // N-terminal mod can only be specified by delta mass
+      {
+        vector<String> term_mods;
+        mod_db->getTerminalModificationsByDiffMonoMass(
+          term_mods, mass, tolerance, ResidueModification::N_TERM);
+        if (!term_mods.empty())
+        {
+          aas.n_term_mod_ = &(mod_db->getTerminalModification(
+                                term_mods[0], ResidueModification::N_TERM));
           return mod_end;
         }
+        LOG_WARN << "Warning: unknown N-terminal modification '" + mod + "' - adding it to the database" << endl;
       }
-      else // float mass -> use best-matching modification
+      // create new modification:
+      Residue new_res;
+      new_res.setName(mod);
+      if (residue && delta_mass)
       {
-        const ResidueModification* res_mod;
-        if (delta_mass)
-        {
-          res_mod = mod_db->getBestModificationsByDiffMonoMass(
-            residue->getOneLetterCode(), mass, tolerance);
-        }
-        else // absolute mass
-        {
-          res_mod = mod_db->getBestModificationsByMonoMass(
-            residue->getOneLetterCode(), mass, tolerance);
-        }
-        if (res_mod)
-        {
-          aas.peptide_.back() = ResidueDB::getInstance()->
-            getModifiedResidue(residue, res_mod->getId());
-          return mod_end;
-        }
+        new_res.setMonoWeight(mass + residue->getMonoWeight());
+        new_res.setAverageWeight(mass +
+                                 residue->getAverageWeight());
       }
-      LOG_WARN << "Warning: unknown modification '" + mod + "' of residue '" +
-        residue->getOneLetterCode() + "' - adding it to the database" << endl;
-    }
-    // at beginning of peptide:
-    else if (delta_mass) // N-terminal mod can only be specified by delta mass
-    {
-      vector<String> term_mods;
-      mod_db->getTerminalModificationsByDiffMonoMass(
-        term_mods, mass, tolerance, ResidueModification::N_TERM);
-      if (!term_mods.empty())
-      {
-        aas.n_term_mod_ = &(mod_db->getTerminalModification(
-                              term_mods[0], ResidueModification::N_TERM));
-        return mod_end;
+      else
+      { // mass value is for an internal residue, but methods expect full residue:
+        new_res.setMonoWeight(mass + Residue::getInternalToFullMonoWeight());
+        new_res.setAverageWeight(mass +
+                                 Residue::getInternalToFullAverageWeight());
       }
-      LOG_WARN << "Warning: unknown N-terminal modification '" + mod + "' - adding it to the database" << endl;
-    }
-    // create new modification:
-    Residue new_res;
-    new_res.setName(mod);
-    if (residue && delta_mass)
-    {
-      new_res.setMonoWeight(mass + residue->getMonoWeight());
-      new_res.setAverageWeight(mass +
-                               residue->getAverageWeight());
+      ResidueDB::getInstance()->addResidue(new_res);
+      aas.peptide_.back() = ResidueDB::getInstance()->getResidue(mod);
+      return mod_end;
     }
     else
-    { // mass value is for an internal residue, but methods expect full residue:
-      new_res.setMonoWeight(mass + Residue::getInternalToFullMonoWeight());
-      new_res.setAverageWeight(mass +
-                               Residue::getInternalToFullAverageWeight());
+    {
+      ModificationsDB* mod_db = ModificationsDB::getInstance();
+      if (aas.peptide_.empty()) // start of peptide -> N-terminal mod.
+      {
+        aas.n_term_mod_ = &(mod_db->getTerminalModification(
+                              mod, ResidueModification::N_TERM));
+        return mod_end;
+      }
+      if (distance(mod_end, str.end()) == 1) // end of peptide -> C-terminal mod.?
+      {
+        try
+        {
+          const ResidueModification* term_mod =
+            &(mod_db->getTerminalModification(mod, ResidueModification::C_TERM));
+          aas.c_term_mod_ = term_mod;
+          return mod_end;
+        }
+        catch (Exception::ElementNotFound& /* e */)
+        { // just do nothing, the mod is presumably a non-terminal one
+        }
+      }
+      aas.peptide_.back() = ResidueDB::getInstance()->
+        getModifiedResidue(aas.peptide_.back(), mod);
+      // @TODO: if mod isn't found, "InvalidValue" is raised - catch it here?
+      return mod_end;
     }
-    ResidueDB::getInstance()->addResidue(new_res);
-    aas.peptide_.back() = ResidueDB::getInstance()->getResidue(mod);
-    return mod_end;
   }
 
   void AASequence::parseString_(const String& pep, AASequence& aas,

@@ -458,6 +458,11 @@ namespace OpenMS
 
           mytransition.fragment_mzdelta = String(best_fragment_annotation_with_deviation[1]).toDouble();
         }
+        else
+        {
+          tmp_line.clear();
+          continue;
+        }
       }
 
       cleanupTransitions_(mytransition);

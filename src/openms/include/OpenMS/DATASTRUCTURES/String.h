@@ -147,6 +147,9 @@ public:
 
     /// true if String contains the @p byte, false otherwise
     OPENMS_DLLAPI bool has(Byte byte) const;
+
+    /// true if String is numeric double, false otherwise
+    OPENMS_DLLAPI bool isDouble() const;
     //@}
 
 
